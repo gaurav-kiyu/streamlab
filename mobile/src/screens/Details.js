@@ -11,9 +11,11 @@ import {
   Platform,
 } from "react-native";
 import { loadList, toggleList } from "../storage";
-import { getProviders, getMovieDetails, getSimilarMovies, img, backdropImg } from "../tmdb";
+import { getProviders, getMovieDetails, getSimilarMovies, img, backdropImg, ATTRIBUTION } from "../tmdb";
 import { loadDownloads, startDownload, removeDownload } from "../downloads";
 import { syncCloudWatchlistToggle } from "../api";
+import { getVerifiedAudioInfo, getVerifiedSubtitleInfo } from "../languages";
+import { resolveProviderHandoffUrl, validateExternalUrl } from "../providers";
 import { useT } from "../i18n";
 
 const isTV = Platform.isTV;
@@ -42,13 +44,29 @@ function Btn({ label, onPress, autoFocus, primary, disabled, variant }) {
   );
 }
 
-const line = (label, arr) =>
-  arr && arr.length ? (
-    <Text style={styles.provItem}>
-      <Text style={styles.provLabel}>{label}: </Text>
-      {arr.join(", ")}
-    </Text>
-  ) : null;
+function ProviderPill({ providerName, type, link }) {
+  const [focused, setFocused] = useState(false);
+  const handlePress = () => {
+    const dest = resolveProviderHandoffUrl(providerName, null, link);
+    if (validateExternalUrl(dest)) {
+      Linking.openURL(dest).catch(() => {});
+    }
+  };
+
+  return (
+    <Pressable
+      onPress={handlePress}
+      onFocus={() => setFocused(true)}
+      onBlur={() => setFocused(false)}
+      accessibilityRole="link"
+      accessibilityLabel={`Watch on ${providerName} (${type})`}
+      style={[styles.providerPill, focused && styles.providerPillFocus]}
+    >
+      <Text style={styles.providerPillName}>{providerName}</Text>
+      <Text style={styles.providerPillType}>• {type} ↗</Text>
+    </Pressable>
+  );
+}
 
 const same = (a, b) => String(a) === String(b);
 
@@ -61,7 +79,7 @@ export default function Details({ item, onPlay, onBack, getDownloadUrl }) {
   const [loading, setLoading] = useState(true);
   const [dl, setDl] = useState({ state: "idle", pct: 0 });
 
-  // Source classification
+  // Source classification (Strict Category 1, 2, 3 boundary)
   const isJellyfin = !!item.stream && !item.archiveId;
   const isArchive = !!item.archiveId;
   const isPlayable = isJellyfin || isArchive || !!item.stream;
@@ -123,12 +141,30 @@ export default function Details({ item, onPlay, onBack, getDownloadUrl }) {
   const genresList = (details?.genres || []).map((g) => g.name).join(" · ");
   const castList = (details?.credits?.cast || []).slice(0, 5).map((c) => c.name).join(", ");
 
+  // Language Verification Analysis (Part B2)
+  const audioInfo = getVerifiedAudioInfo(details || item);
+  const subtitleInfo = getVerifiedSubtitleInfo(details || item);
+
   const dlLabel =
     dl.state === "done"
       ? t("removeDownload")
       : dl.state === "downloading"
       ? `${t("downloading")} ${dl.pct}%`
       : t("download");
+
+  // Primary OTT Provider for handoff
+  const primaryProviderName =
+    (prov?.subscription && prov.subscription[0]) ||
+    (prov?.free && prov.free[0]) ||
+    (prov?.rent && prov.rent[0]) ||
+    null;
+
+  const handlePrimaryHandoff = () => {
+    const url = resolveProviderHandoffUrl(primaryProviderName, item, prov?.link);
+    if (validateExternalUrl(url)) {
+      Linking.openURL(url).catch(() => {});
+    }
+  };
 
   return (
     <ScrollView contentContainerStyle={styles.container}>
@@ -141,11 +177,11 @@ export default function Details({ item, onPlay, onBack, getDownloadUrl }) {
       )}
 
       <View style={styles.contentWrap}>
-        {/* Source Badge */}
+        {/* Source & Rights Classification Badge */}
         <View style={styles.badgeRow}>
-          {isJellyfin && <Text style={[styles.sourceBadge, styles.badgeJf]}>Personal Library · Jellyfin</Text>}
-          {isArchive && <Text style={[styles.sourceBadge, styles.badgeArchive]}>Public Domain · Internet Archive</Text>}
-          {!isJellyfin && !isArchive && <Text style={[styles.sourceBadge, styles.badgeTmdb]}>OTT Discovery · TMDB</Text>}
+          {isJellyfin && <Text style={[styles.sourceBadge, styles.badgeJf]}>Category 1 · Personal Library (Direct Play)</Text>}
+          {isArchive && <Text style={[styles.sourceBadge, styles.badgeArchive]}>Category 3 · Public Domain / Free Broadcaster</Text>}
+          {!isJellyfin && !isArchive && <Text style={[styles.sourceBadge, styles.badgeTmdb]}>Category 2 · External OTT Availability</Text>}
           {dl.state === "done" && <Text style={[styles.sourceBadge, styles.badgeDownloaded]}>Downloaded Offline</Text>}
         </View>
 
@@ -162,20 +198,45 @@ export default function Details({ item, onPlay, onBack, getDownloadUrl }) {
             </View>
 
             {genresList ? <Text style={styles.genresText}>{genresList}</Text> : null}
+
+            {/* Verified Audio & Subtitle Language Status (Part B2 & G8) */}
+            <View style={styles.langStatusBox}>
+              <Text style={styles.langLabel}>Original Language: <Text style={styles.langVal}>{item.original_language?.toUpperCase() || "IN"}</Text></Text>
+              <Text style={styles.langLabel}>
+                Audio Track:{" "}
+                <Text style={audioInfo.verified ? styles.langValVerified : styles.langValUnverified}>
+                  {audioInfo.text}
+                </Text>
+              </Text>
+              <Text style={styles.langLabel}>
+                Subtitles:{" "}
+                <Text style={subtitleInfo.verified ? styles.langValVerified : styles.langValUnverified}>
+                  {subtitleInfo.text}
+                </Text>
+              </Text>
+            </View>
           </View>
         </View>
 
-        {/* Action Buttons */}
+        {/* Action Buttons: Differentiating Category 1 Play vs Category 2 Handoff */}
         <View style={styles.btnRow}>
           {isPlayable || dl.state === "done" ? (
-            <Btn primary autoFocus label="▶  Play Now" onPress={onPlay} />
+            <Btn primary autoFocus label="▶  Play Now (Authorized Source)" onPress={onPlay} />
+          ) : primaryProviderName ? (
+            <Btn
+              primary
+              autoFocus
+              label={`Watch on ${primaryProviderName} ↗`}
+              onPress={handlePrimaryHandoff}
+            />
           ) : (
             <Btn
               autoFocus
               variant="secondary"
-              label="Check Where to Watch in India"
+              label="Check OTT Streaming Availability in India"
               onPress={() => {
-                if (prov?.link) Linking.openURL(prov.link);
+                const url = prov?.link || "https://www.justwatch.com/in";
+                if (validateExternalUrl(url)) Linking.openURL(url);
               }}
             />
           )}
@@ -199,7 +260,7 @@ export default function Details({ item, onPlay, onBack, getDownloadUrl }) {
           </View>
         ) : null}
 
-        {/* More Like This / Recommendations Shelf (REQ-18-03) */}
+        {/* More Like This / Recommendations Shelf */}
         {similar && similar.length > 0 && (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>More Like This</Text>
@@ -229,25 +290,65 @@ export default function Details({ item, onPlay, onBack, getDownloadUrl }) {
           </View>
         )}
 
-        {/* Where to Watch in India (JustWatch) */}
+        {/* Where to Watch in India (Multi-OTT Availability & Official Handoff) */}
         {prov && (
           <View style={styles.provSection}>
             <Text style={styles.provTitle}>{t("whereIndia")}</Text>
-            {line(t("free"), prov.free)}
-            {line(t("subscription"), prov.subscription)}
-            {line(t("rent"), prov.rent)}
-            {!prov.free.length && !prov.subscription.length && !prov.rent.length && (
+            <Text style={styles.provNotice}>
+              Select an official platform to launch their streaming app or website:
+            </Text>
+
+            {prov.subscription && prov.subscription.length > 0 && (
+              <View style={styles.provGroup}>
+                <Text style={styles.provGroupHeading}>Subscription</Text>
+                <View style={styles.pillRow}>
+                  {prov.subscription.map((name) => (
+                    <ProviderPill key={name} providerName={name} type="Subscription" link={prov.link} />
+                  ))}
+                </View>
+              </View>
+            )}
+
+            {prov.free && prov.free.length > 0 && (
+              <View style={styles.provGroup}>
+                <Text style={styles.provGroupHeading}>Free / Ad-Supported</Text>
+                <View style={styles.pillRow}>
+                  {prov.free.map((name) => (
+                    <ProviderPill key={name} providerName={name} type="Free" link={prov.link} />
+                  ))}
+                </View>
+              </View>
+            )}
+
+            {prov.rent && prov.rent.length > 0 && (
+              <View style={styles.provGroup}>
+                <Text style={styles.provGroupHeading}>Rent or Buy</Text>
+                <View style={styles.pillRow}>
+                  {prov.rent.map((name) => (
+                    <ProviderPill key={name} providerName={name} type="Rent" link={prov.link} />
+                  ))}
+                </View>
+              </View>
+            )}
+
+            {!prov.free?.length && !prov.subscription?.length && !prov.rent?.length && (
               <Text style={styles.provItem}>{t("noListings")}</Text>
             )}
+
             {prov.link && (
               <Pressable
                 style={styles.ottLinkBtn}
                 onPress={() => Linking.openURL(prov.link)}
                 accessibilityRole="link"
               >
-                <Text style={styles.ottLinkText}>Open JustWatch India Listings ↗</Text>
+                <Text style={styles.ottLinkText}>Open Full JustWatch India Guide ↗</Text>
               </Pressable>
             )}
+
+            <View style={styles.provAttribution}>
+              <Text style={styles.attributionSmall}>{ATTRIBUTION.justWatch.notice}</Text>
+              <Text style={styles.attributionSmall}>{ATTRIBUTION.tmdb.notice}</Text>
+            </View>
           </View>
         )}
       </View>
@@ -285,6 +386,18 @@ const styles = StyleSheet.create({
   metaText: { color: "#8fa8b6", fontSize: isTV ? 17 : 14, fontWeight: "600" },
   ratingText: { color: "#ffc107" },
   genresText: { color: "#8fa8b6", fontSize: isTV ? 16 : 13, marginTop: 4 },
+  langStatusBox: {
+    marginTop: 8,
+    padding: 8,
+    borderRadius: 6,
+    backgroundColor: "#172c3a",
+    borderWidth: 1,
+    borderColor: "#2a4557",
+  },
+  langLabel: { color: "#8fa8b6", fontSize: 12, marginBottom: 2 },
+  langVal: { color: "#e8f1f5", fontWeight: "700" },
+  langValVerified: { color: "#38ef7d", fontWeight: "700" },
+  langValUnverified: { color: "#ffa502", fontStyle: "italic" },
   btnRow: { flexDirection: "row", flexWrap: "wrap", gap: 12, marginVertical: 18 },
   btn: {
     minHeight: 48,
@@ -311,13 +424,32 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#2a4557",
   },
-  provTitle: { color: "#e8f1f5", fontSize: 18, fontWeight: "700", marginBottom: 8 },
-  provItem: { color: "#8fa8b6", fontSize: 15, marginBottom: 4 },
-  provLabel: { color: "#e8f1f5", fontWeight: "600" },
+  provTitle: { color: "#e8f1f5", fontSize: 18, fontWeight: "700", marginBottom: 4 },
+  provNotice: { color: "#8fa8b6", fontSize: 13, marginBottom: 12 },
+  provGroup: { marginBottom: 12 },
+  provGroupHeading: { color: "#ff6b8b", fontSize: 14, fontWeight: "700", marginBottom: 6 },
+  pillRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  providerPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#1e384b",
+    borderWidth: 1.5,
+    borderColor: "#2a4557",
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    gap: 6,
+  },
+  providerPillFocus: { borderColor: "#ff6b8b", transform: [{ scale: 1.05 }] },
+  providerPillName: { color: "#ffffff", fontWeight: "700", fontSize: 14 },
+  providerPillType: { color: "#8fa8b6", fontSize: 12 },
+  provItem: { color: "#8fa8b6", fontSize: 14, marginVertical: 4 },
   similarCard: { width: isTV ? 140 : 105, marginRight: 12 },
   similarPoster: { width: isTV ? 140 : 105, height: isTV ? 210 : 155, borderRadius: 8 },
   similarTitle: { color: "#e8f1f5", fontSize: isTV ? 15 : 12, marginTop: 4, fontWeight: "600" },
   placeholder: { backgroundColor: "#172c3a", justifyContent: "center", alignItems: "center", padding: 6 },
-  ottLinkBtn: { marginTop: 10, alignSelf: "flex-start" },
-  ottLinkText: { color: "#ff6b8b", fontSize: 15, fontWeight: "700", textDecorationLine: "underline" },
+  ottLinkBtn: { marginTop: 12, alignSelf: "flex-start" },
+  ottLinkText: { color: "#ff6b8b", fontSize: 14, fontWeight: "700", textDecorationLine: "underline" },
+  provAttribution: { marginTop: 16, borderTopWidth: 1, borderTopColor: "#2a4557", paddingTop: 8 },
+  attributionSmall: { color: "#6c8494", fontSize: 11, marginBottom: 2 },
 });
