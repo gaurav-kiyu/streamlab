@@ -24,20 +24,82 @@ async function fetchWithCache(url) {
   return data;
 }
 
+// Maps standard TMDB v3 API paths into typed, allowlisted server proxy URLs
+export function mapTmdbPathToProxy(path, base) {
+  if (!path || typeof path !== "string") return null;
+  const baseUrl = (base || "").replace(/\/+$/, "");
+  const [cleanPath, queryString] = path.split("?");
+  const qs = queryString ? `?${queryString}` : "";
+
+  // 1. Discover
+  if (cleanPath === "/discover/movie") {
+    const sep = queryString ? "&" : "?";
+    return `${baseUrl}/api/tmdb/discover${qs}${sep}type=movie`;
+  }
+  if (cleanPath === "/discover/tv") {
+    const sep = queryString ? "&" : "?";
+    return `${baseUrl}/api/tmdb/discover${qs}${sep}type=tv`;
+  }
+
+  // 2. Search
+  if (cleanPath === "/search/movie") {
+    const sep = queryString ? "&" : "?";
+    return `${baseUrl}/api/tmdb/search${qs}${sep}type=movie`;
+  }
+  if (cleanPath === "/search/tv") {
+    const sep = queryString ? "&" : "?";
+    return `${baseUrl}/api/tmdb/search${qs}${sep}type=tv`;
+  }
+  if (cleanPath === "/search/multi") {
+    const sep = queryString ? "&" : "?";
+    return `${baseUrl}/api/tmdb/search${qs}${sep}type=multi`;
+  }
+
+  // 3. Similar
+  const movieSimilarMatch = cleanPath.match(/^\/movie\/(\d+)\/similar$/);
+  if (movieSimilarMatch) {
+    return `${baseUrl}/api/tmdb/movie/${movieSimilarMatch[1]}/similar${qs}`;
+  }
+  const tvSimilarMatch = cleanPath.match(/^\/tv\/(\d+)\/similar$/);
+  if (tvSimilarMatch) {
+    return `${baseUrl}/api/tmdb/tv/${tvSimilarMatch[1]}/similar${qs}`;
+  }
+
+  // 4. Watch Providers
+  const movieWatchMatch = cleanPath.match(/^\/movie\/(\d+)\/watch\/providers$/);
+  if (movieWatchMatch) {
+    return `${baseUrl}/api/tmdb/movie/${movieWatchMatch[1]}/watch-providers${qs}`;
+  }
+  const tvWatchMatch = cleanPath.match(/^\/tv\/(\d+)\/watch\/providers$/);
+  if (tvWatchMatch) {
+    return `${baseUrl}/api/tmdb/tv/${tvWatchMatch[1]}/watch-providers${qs}`;
+  }
+
+  // 5. Details
+  const movieMatch = cleanPath.match(/^\/movie\/(\d+)$/);
+  if (movieMatch) {
+    return `${baseUrl}/api/tmdb/movie/${movieMatch[1]}${qs}`;
+  }
+  const tvMatch = cleanPath.match(/^\/tv\/(\d+)$/);
+  if (tvMatch) {
+    return `${baseUrl}/api/tmdb/tv/${tvMatch[1]}${qs}`;
+  }
+
+  return null;
+}
+
 async function get(path) {
   const key = getSettings().tmdbKey;
   if (!key) {
-    // Attempt to route through server proxy if local key not set
+    // Route through explicit server proxy when local client key is not configured
     const { serverUrl } = getSettings();
     if (serverUrl) {
-      const base = serverUrl.replace(/\/+$/, "");
-      const proxyUrl = path.startsWith("/discover")
-        ? `${base}/api/tmdb/discover?${path.split("?")[1] || ""}`
-        : `${base}/api/tmdb/search?${path.split("?")[1] || ""}`;
+      const proxyUrl = mapTmdbPathToProxy(path, serverUrl);
+      if (!proxyUrl) return null;
       const res = await fetch(proxyUrl).catch(() => null);
       if (res && res.ok) {
         const json = await res.json();
-        return json.results || json;
+        return json.results !== undefined ? json.results : json;
       }
     }
     return null;

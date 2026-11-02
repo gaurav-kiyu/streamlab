@@ -656,62 +656,218 @@ app.post("/api/sync/watchlist/toggle", auth, wrap(async (req, res) => {
   }
 }));
 
-// ---- TMDB Secure Proxy (With Timeout & Kids Filter) ----
-app.get("/api/tmdb/discover", wrap(async (req, res) => {
+// ---- Bounded In-Memory Cache with TTL & LRU Eviction ----
+class BoundedCache {
+  constructor(maxEntries = 500, ttlMs = 15 * 60 * 1000) {
+    this.maxEntries = maxEntries;
+    this.ttlMs = ttlMs;
+    this.cache = new Map();
+  }
+
+  get(key) {
+    const item = this.cache.get(key);
+    if (!item) return null;
+    if (Date.now() > item.expires) {
+      this.cache.delete(key);
+      return null;
+    }
+    return item.data;
+  }
+
+  set(key, data) {
+    if (this.cache.size >= this.maxEntries) {
+      const oldestKey = this.cache.keys().next().value;
+      if (oldestKey) this.cache.delete(oldestKey);
+    }
+    this.cache.set(key, { data, expires: Date.now() + this.ttlMs });
+  }
+
+  clear() {
+    this.cache.clear();
+  }
+}
+
+const tmdbCache = new BoundedCache(500, 15 * 60 * 1000);
+
+// TMDB Security & Validation Helpers
+function validateTmdbId(id) {
+  if (!id || !/^\d+$/.test(String(id).trim())) {
+    throw err("Invalid TMDB ID: must be a positive integer", 400, "INVALID_TMDB_ID");
+  }
+  return String(id).trim();
+}
+
+function getTmdbApiKey() {
   const config = getAllConfig();
   const apiKey = config.tmdbKey;
   if (!apiKey) {
-    return res.status(503).json({ error: "TMDB API key not configured on server", code: "TMDB_NOT_CONFIGURED" });
+    throw err("TMDB API key not configured on server", 503, "TMDB_NOT_CONFIGURED");
   }
-  const type = req.query.type === "tv" ? "tv" : "movie";
-  const params = new URLSearchParams(req.query);
-  params.delete("type");
+  return apiKey;
+}
+
+async function executeTmdbRequest(upstreamPath, queryParams = {}) {
+  const apiKey = getTmdbApiKey();
+  const params = new URLSearchParams();
+  for (const [k, v] of Object.entries(queryParams)) {
+    if (v !== undefined && v !== null && v !== "") {
+      params.set(k, String(v));
+    }
+  }
   params.set("api_key", apiKey);
 
-  if (req.query.kids === "true") {
-    params.set("include_adult", "false");
-    params.set("with_genres", "10751,16");
-  }
+  const cacheKey = upstreamPath + "?" + params.toString();
+  const cached = tmdbCache.get(cacheKey);
+  if (cached) return cached;
 
+  const url = "https://api.themoviedb.org/3" + upstreamPath + "?" + params.toString();
   try {
-    const tmdbRes = await fetch(`https://api.themoviedb.org/3/discover/${type}?${params.toString()}`, {
+    const tmdbRes = await fetch(url, {
       signal: AbortSignal.timeout(6000)
     });
-    if (!tmdbRes.ok) throw err(`TMDB returned ${tmdbRes.status}`, 502, "UPSTREAM_ERROR");
+    if (!tmdbRes.ok) {
+      if (tmdbRes.status === 404) {
+        throw err("TMDB resource not found", 404, "NOT_FOUND");
+      }
+      throw err("TMDB returned " + tmdbRes.status, 502, "UPSTREAM_ERROR");
+    }
     const data = await tmdbRes.json();
-    res.json(data);
+    tmdbCache.set(cacheKey, data);
+    return data;
   } catch (e) {
     if (e.name === "TimeoutError" || e.name === "AbortError") {
       throw err("Upstream TMDB request timed out", 504, "UPSTREAM_TIMEOUT");
     }
     throw e;
   }
+}
+
+// ---- Explicit, Allowlisted TMDB Proxy Endpoints ----
+
+// 1. Discover
+const ALLOWED_DISCOVER_PARAMS = new Set([
+  "with_original_language", "region", "sort_by", "vote_average.desc", "vote_count.gte",
+  "with_genres", "page", "watch_region", "with_watch_providers", "with_watch_monetization_types",
+  "include_adult", "primary_release_year", "first_air_date_year"
+]);
+
+app.get("/api/tmdb/discover", wrap(async (req, res) => {
+  const type = req.query.type === "tv" ? "tv" : "movie";
+  const safeParams = {};
+
+  for (const key of Object.keys(req.query)) {
+    if (ALLOWED_DISCOVER_PARAMS.has(key)) {
+      safeParams[key] = req.query[key];
+    }
+  }
+
+  if (req.query.kids === "true") {
+    safeParams.include_adult = "false";
+    safeParams.with_genres = "10751,16";
+  }
+
+  const data = await executeTmdbRequest("/discover/" + type, safeParams);
+  res.json(data);
 }));
+
+// 2. Search
+const ALLOWED_SEARCH_PARAMS = new Set([
+  "region", "page", "include_adult"
+]);
 
 app.get("/api/tmdb/search", wrap(async (req, res) => {
-  const config = getAllConfig();
-  const apiKey = config.tmdbKey;
   const q = String(req.query.query || "").trim();
   if (!q) return res.json({ results: [] });
-  if (!apiKey) {
-    return res.status(503).json({ error: "TMDB API key not configured on server", code: "TMDB_NOT_CONFIGURED" });
+
+  const type = ["tv", "multi"].includes(req.query.type) ? req.query.type : "movie";
+  const safeParams = { query: q };
+
+  for (const key of Object.keys(req.query)) {
+    if (ALLOWED_SEARCH_PARAMS.has(key)) {
+      safeParams[key] = req.query[key];
+    }
   }
 
-  try {
-    const tmdbRes = await fetch(
-      `https://api.themoviedb.org/3/search/movie?query=${encodeURIComponent(q)}&region=IN&api_key=${apiKey}`,
-      { signal: AbortSignal.timeout(6000) }
-    );
-    if (!tmdbRes.ok) throw err(`TMDB returned ${tmdbRes.status}`, 502, "UPSTREAM_ERROR");
-    const data = await tmdbRes.json();
-    res.json(data);
-  } catch (e) {
-    if (e.name === "TimeoutError" || e.name === "AbortError") {
-      throw err("Upstream TMDB request timed out", 504, "UPSTREAM_TIMEOUT");
-    }
-    throw e;
-  }
+  if (!safeParams.region) safeParams.region = "IN";
+
+  const data = await executeTmdbRequest("/search/" + type, safeParams);
+  res.json(data);
 }));
+
+// 3. Movie Details
+app.get("/api/tmdb/movie/:id", wrap(async (req, res) => {
+  const id = validateTmdbId(req.params.id);
+  const safeParams = {};
+  if (req.query.language) safeParams.language = String(req.query.language).slice(0, 10);
+  if (req.query.append_to_response) {
+    const allowedAppends = ["credits", "videos", "images", "similar", "watch/providers"];
+    const requested = String(req.query.append_to_response).split(",");
+    const filtered = requested.filter((a) => allowedAppends.includes(a.trim()));
+    if (filtered.length > 0) safeParams.append_to_response = filtered.join(",");
+  }
+
+  const data = await executeTmdbRequest("/movie/" + id, safeParams);
+  res.json(data);
+}));
+
+// 4. TV Details
+app.get("/api/tmdb/tv/:id", wrap(async (req, res) => {
+  const id = validateTmdbId(req.params.id);
+  const safeParams = {};
+  if (req.query.language) safeParams.language = String(req.query.language).slice(0, 10);
+  if (req.query.append_to_response) {
+    const allowedAppends = ["credits", "videos", "images", "similar", "watch/providers"];
+    const requested = String(req.query.append_to_response).split(",");
+    const filtered = requested.filter((a) => allowedAppends.includes(a.trim()));
+    if (filtered.length > 0) safeParams.append_to_response = filtered.join(",");
+  }
+
+  const data = await executeTmdbRequest("/tv/" + id, safeParams);
+  res.json(data);
+}));
+
+// 5. Movie Similar
+app.get("/api/tmdb/movie/:id/similar", wrap(async (req, res) => {
+  const id = validateTmdbId(req.params.id);
+  const safeParams = {};
+  if (req.query.page && /^\d+$/.test(req.query.page)) safeParams.page = req.query.page;
+  if (req.query.language) safeParams.language = String(req.query.language).slice(0, 10);
+
+  const data = await executeTmdbRequest("/movie/" + id + "/similar", safeParams);
+  res.json(data);
+}));
+
+// 6. TV Similar
+app.get("/api/tmdb/tv/:id/similar", wrap(async (req, res) => {
+  const id = validateTmdbId(req.params.id);
+  const safeParams = {};
+  if (req.query.page && /^\d+$/.test(req.query.page)) safeParams.page = req.query.page;
+  if (req.query.language) safeParams.language = String(req.query.language).slice(0, 10);
+
+  const data = await executeTmdbRequest("/tv/" + id + "/similar", safeParams);
+  res.json(data);
+}));
+
+// 7. Movie Watch Providers
+app.get("/api/tmdb/movie/:id/watch-providers", wrap(async (req, res) => {
+  const id = validateTmdbId(req.params.id);
+  const safeParams = {};
+  if (req.query.language) safeParams.language = String(req.query.language).slice(0, 10);
+
+  const data = await executeTmdbRequest("/movie/" + id + "/watch/providers", safeParams);
+  res.json(data);
+}));
+
+// 8. TV Watch Providers
+app.get("/api/tmdb/tv/:id/watch-providers", wrap(async (req, res) => {
+  const id = validateTmdbId(req.params.id);
+  const safeParams = {};
+  if (req.query.language) safeParams.language = String(req.query.language).slice(0, 10);
+
+  const data = await executeTmdbRequest("/tv/" + id + "/watch/providers", safeParams);
+  res.json(data);
+}));
+
 
 // ---- Live TV Core API (Phase 16) ----
 app.get("/api/livetv/providers", auth, wrap(async (req, res) => {
