@@ -1,0 +1,20 @@
+{
+  "name": "streamlab-root",
+  "version": "1.2.0",
+  "private": true,
+  "workspaces": [
+    "server",
+    "mobile"
+  ],
+  "scripts": {
+    "start": "npm run start --workspace=@streamlab/server",
+    "server": "npm run start --workspace=@streamlab/server",
+    "server:dev": "npm run dev --workspace=@streamlab/server",
+    "server:test": "npm run test --workspace=@streamlab/server",
+    "mobile": "npm run start --workspace=@streamlab/mobile",
+    "mobile:android": "npm run android --workspace=@streamlab/mobile",
+    "mobile:ios": "npm run ios --workspace=@streamlab/mobile",
+    "mobile:test": "npm run test --workspace=@streamlab/mobile",
+    "test": "npm run test --workspaces --if-present"
+  }
+}

@@ -1,0 +1,600 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>StreamLab Administration Console</title>
+  <style>
+    :root {
+      --bg: #10202b;
+      --card: #172c3a;
+      --card-hover: #1e384b;
+      --primary: #ff6b8b;
+      --primary-hover: #ff5277;
+      --text: #e8f1f5;
+      --muted: #8fa8b6;
+      --border: #2a4557;
+      --success: #38ef7d;
+      --danger: #ff4757;
+      --warning: #ffa502;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+    body { background-color: var(--bg); color: var(--text); min-height: 100vh; display: flex; flex-direction: column; }
+    header { background-color: var(--card); border-bottom: 2px solid var(--border); padding: 1rem 2rem; display: flex; justify-content: space-between; align-items: center; }
+    .brand { display: flex; align-items: center; gap: 0.75rem; font-size: 1.4rem; font-weight: 700; color: var(--primary); letter-spacing: 0.5px; }
+    .brand span { color: var(--text); font-size: 0.95rem; font-weight: 400; opacity: 0.8; }
+    .user-info { display: flex; align-items: center; gap: 1rem; }
+    .btn { background-color: var(--card); color: var(--text); border: 2px solid var(--border); padding: 0.5rem 1.1rem; border-radius: 8px; font-weight: 600; cursor: pointer; transition: all 0.2s ease; }
+    .btn:hover { border-color: var(--primary); color: #fff; }
+    .btn-primary { background-color: var(--primary); color: #10202b; border-color: var(--primary); }
+    .btn-primary:hover { background-color: var(--primary-hover); border-color: var(--primary-hover); color: #fff; }
+    .btn-danger { border-color: var(--danger); color: var(--danger); }
+    .btn-danger:hover { background-color: var(--danger); color: #fff; }
+    .btn-sm { padding: 0.3rem 0.6rem; font-size: 0.85rem; }
+    
+    nav { background-color: #132431; border-bottom: 1px solid var(--border); padding: 0 2rem; display: flex; gap: 1rem; overflow-x: auto; }
+    .nav-tab { padding: 0.9rem 1.2rem; cursor: pointer; font-weight: 600; color: var(--muted); border-bottom: 3px solid transparent; transition: all 0.2s; white-space: nowrap; }
+    .nav-tab:hover { color: var(--text); }
+    .nav-tab.active { color: var(--primary); border-bottom-color: var(--primary); }
+
+    main { flex: 1; padding: 2rem; max-width: 1300px; width: 100%; margin: 0 auto; }
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+
+    /* Dashboard Stats Grid */
+    .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1.25rem; margin-bottom: 2rem; }
+    .stat-card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 1.5rem; }
+    .stat-label { color: var(--muted); font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 0.5rem; }
+    .stat-val { font-size: 2.2rem; font-weight: 700; color: var(--text); }
+    .stat-val.highlight { color: var(--primary); }
+
+    /* Tables */
+    .card-box { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 1.5rem; margin-bottom: 2rem; }
+    .card-box h3 { margin-bottom: 1rem; font-size: 1.25rem; display: flex; justify-content: space-between; align-items: center; }
+    table { width: 100%; border-collapse: collapse; margin-top: 1rem; text-align: left; }
+    th { padding: 0.85rem 1rem; background-color: #12222e; color: var(--muted); font-weight: 600; font-size: 0.85rem; border-bottom: 2px solid var(--border); }
+    td { padding: 0.85rem 1rem; border-bottom: 1px solid var(--border); font-size: 0.95rem; }
+    tr:hover td { background-color: var(--card-hover); }
+
+    /* Badges */
+    .badge { display: inline-block; padding: 0.2rem 0.6rem; border-radius: 12px; font-size: 0.75rem; font-weight: 700; }
+    .badge-admin { background: rgba(255,107,139,0.2); color: var(--primary); border: 1px solid var(--primary); }
+    .badge-user { background: rgba(143,168,182,0.2); color: var(--muted); border: 1px solid var(--border); }
+    .badge-active { background: rgba(56,239,125,0.2); color: var(--success); }
+    .badge-disabled { background: rgba(255,71,87,0.2); color: var(--danger); }
+
+    /* Form Styles */
+    .form-group { margin-bottom: 1.25rem; }
+    label { display: block; font-weight: 600; font-size: 0.9rem; margin-bottom: 0.4rem; color: var(--text); }
+    .help-text { font-size: 0.8rem; color: var(--muted); margin-top: 0.25rem; }
+    input[type="text"], input[type="password"], input[type="number"], select, textarea {
+      width: 100%; background: #10202b; color: var(--text); border: 1.5px solid var(--border); border-radius: 8px;
+      padding: 0.65rem 0.9rem; font-size: 0.95rem; outline: none; transition: border-color 0.2s;
+    }
+    input:focus, select:focus, textarea:focus { border-color: var(--primary); }
+    .form-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1rem; }
+
+    /* Modals */
+    .modal-overlay {
+      position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.75);
+      display: flex; align-items: center; justify-content: center; z-index: 1000; padding: 1rem;
+    }
+    .modal { background: var(--card); border: 2px solid var(--border); border-radius: 14px; max-width: 480px; width: 100%; padding: 2rem; }
+    .modal h2 { font-size: 1.4rem; margin-bottom: 1rem; color: var(--primary); }
+
+    /* Toast */
+    #toast {
+      position: fixed; bottom: 2rem; right: 2rem; padding: 0.85rem 1.5rem; border-radius: 8px;
+      background: var(--card); border: 2px solid var(--border); color: #fff; font-weight: 600;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.5); transform: translateY(100px); opacity: 0; transition: all 0.3s ease; z-index: 2000;
+    }
+    #toast.show { transform: translateY(0); opacity: 1; }
+    #toast.success { border-color: var(--success); }
+    #toast.error { border-color: var(--danger); }
+  </style>
+</head>
+<body>
+
+  <!-- Auth Modal -->
+  <div id="authModal" class="modal-overlay">
+    <div class="modal">
+      <h2>StreamLab Admin Sign In</h2>
+      <p style="color:var(--muted); margin-bottom:1.25rem; font-size:0.9rem;">Enter your administrator credentials to access the console.</p>
+      <div class="form-group">
+        <label>Username</label>
+        <input type="text" id="loginUsername" placeholder="e.g. admin" autocomplete="username">
+      </div>
+      <div class="form-group">
+        <label>Password</label>
+        <input type="password" id="loginPassword" placeholder="••••••••" autocomplete="current-password">
+      </div>
+      <div id="loginError" style="color:var(--danger); font-size:0.85rem; margin-bottom:1rem; display:none;"></div>
+      <button class="btn btn-primary" style="width:100%; padding:0.75rem;" onclick="handleLogin()">Sign In</button>
+    </div>
+  </div>
+
+  <!-- Forced Password Change Modal -->
+  <div id="changePassModal" class="modal-overlay" style="display:none;">
+    <div class="modal">
+      <h2>Change Default Password</h2>
+      <p style="color:var(--warning); margin-bottom:1.25rem; font-size:0.9rem;">
+        Security Requirement: You must change your temporary default password before proceeding.
+      </p>
+      <div class="form-group">
+        <label>Current Password</label>
+        <input type="password" id="curPassword">
+      </div>
+      <div class="form-group">
+        <label>New Password (min 8 characters)</label>
+        <input type="password" id="newPassword">
+      </div>
+      <div id="changePassError" style="color:var(--danger); font-size:0.85rem; margin-bottom:1rem; display:none;"></div>
+      <button class="btn btn-primary" style="width:100%; padding:0.75rem;" onclick="handleChangePassword()">Update Password</button>
+    </div>
+  </div>
+
+  <header>
+    <div class="brand">
+      StreamLab <span>Admin Console</span>
+    </div>
+    <div class="user-info">
+      <span id="adminUserTag" style="color:var(--muted); font-size:0.9rem;"></span>
+      <button class="btn btn-sm" onclick="logout()">Sign Out</button>
+    </div>
+  </header>
+
+  <nav>
+    <div class="nav-tab active" onclick="switchTab('tabStats')">📊 Overview</div>
+    <div class="nav-tab" onclick="switchTab('tabConfig')">⚙️ Configuration</div>
+    <div class="nav-tab" onclick="switchTab('tabUsers')">👥 User Accounts</div>
+    <div class="nav-tab" onclick="switchTab('tabFeatured')">🎬 Featured Rows</div>
+    <div class="nav-tab" onclick="switchTab('tabAudit')">📜 Audit Trail</div>
+  </nav>
+
+  <main>
+    <!-- TAB: Overview -->
+    <div id="tabStats" class="tab-content active">
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-label">Total Users</div>
+          <div class="stat-val highlight" id="statUsers">-</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Active (24h)</div>
+          <div class="stat-val" id="statActive">-</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">New Signups (7d)</div>
+          <div class="stat-val" id="statSignups">-</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Administrators</div>
+          <div class="stat-val" id="statAdmins">-</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Featured Content</div>
+          <div class="stat-val" id="statFeatured">-</div>
+        </div>
+      </div>
+      
+      <div class="card-box">
+        <h3>System Health & Deployment Status</h3>
+        <p style="color:var(--muted); line-height:1.6; font-size:0.95rem;">
+          Platform: <strong>StreamLab Multi-Device Backend v0.2.0</strong><br>
+          Database Engine: <strong>SQLite 3 (WAL Mode, Foreign Keys Enforced)</strong><br>
+          Security Mode: <strong>Strict JWT Authentication & Server-Side Authorization Enabled</strong>
+        </p>
+      </div>
+    </div>
+
+    <!-- TAB: Configuration -->
+    <div id="tabConfig" class="tab-content">
+      <div class="card-box">
+        <h3>Application Remote Configuration</h3>
+        <p style="color:var(--muted); margin-bottom:1.5rem; font-size:0.9rem;">
+          Settings modified here take effect instantly across mobile and TV applications.
+        </p>
+        <div id="configFormContainer"></div>
+        <div style="margin-top:1.5rem;">
+          <button class="btn btn-primary" onclick="saveConfig()">Save All Configuration</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB: Users -->
+    <div id="tabUsers" class="tab-content">
+      <div class="card-box">
+        <h3>User Management</h3>
+        <div style="overflow-x:auto;">
+          <table>
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Username</th>
+                <th>Role</th>
+                <th>Status</th>
+                <th>Created</th>
+                <th>Last Login</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="userTableBody">
+              <tr><td colspan="7" style="text-align:center; color:var(--muted);">Loading users...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB: Featured -->
+    <div id="tabFeatured" class="tab-content">
+      <div class="card-box">
+        <h3>Add Featured Title</h3>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Title</label>
+            <input type="text" id="featTitle" placeholder="e.g. Sintel">
+          </div>
+          <div class="form-group">
+            <label>Stream URL (HLS / MP4)</label>
+            <input type="text" id="featStream" placeholder="https://example.com/playlist.m3u8">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Poster Image URL</label>
+            <input type="text" id="featPoster" placeholder="https://image.tmdb.org/...">
+          </div>
+          <div class="form-group">
+            <label>Language Filter (optional)</label>
+            <input type="text" id="featLang" placeholder="e.g. hi, ta, en">
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Overview</label>
+          <textarea id="featOverview" rows="2" placeholder="Synopsis..."></textarea>
+        </div>
+        <button class="btn btn-primary" onclick="addFeatured()">Publish Featured Content</button>
+      </div>
+
+      <div class="card-box">
+        <h3>Active Featured Items</h3>
+        <div style="overflow-x:auto;">
+          <table>
+            <thead>
+              <tr>
+                <th>Sort</th>
+                <th>Title</th>
+                <th>Language</th>
+                <th>Stream URL</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="featuredTableBody">
+              <tr><td colspan="6" style="text-align:center; color:var(--muted);">Loading featured titles...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB: Audit -->
+    <div id="tabAudit" class="tab-content">
+      <div class="card-box">
+        <h3>Administrative Audit Trail</h3>
+        <div style="overflow-x:auto;">
+          <table>
+            <thead>
+              <tr>
+                <th>Timestamp</th>
+                <th>Actor</th>
+                <th>Action</th>
+                <th>Details</th>
+              </tr>
+            </thead>
+            <tbody id="auditTableBody">
+              <tr><td colspan="4" style="text-align:center; color:var(--muted);">Loading audit logs...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <div id="toast">Notification</div>
+
+  <script>
+    let token = sessionStorage.getItem("streamlab_admin_token") || "";
+    let currentUser = null;
+    let configSchema = [];
+    let currentConfig = {};
+
+    function showToast(msg, isError = false) {
+      const t = document.getElementById("toast");
+      t.textContent = msg;
+      t.className = isError ? "show error" : "show success";
+      setTimeout(() => { t.className = ""; }, 3500);
+    }
+
+    async function api(path, options = {}) {
+      options.headers = options.headers || {};
+      if (token) options.headers["Authorization"] = "Bearer " + token;
+      if (options.body && typeof options.body === "object") {
+        options.headers["Content-Type"] = "application/json";
+        options.body = JSON.stringify(options.body);
+      }
+      const res = await fetch(path, options);
+      if (res.status === 401) {
+        logout();
+        throw new Error("Session expired. Please log in again.");
+      }
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Request failed (" + res.status + ")");
+      return data;
+    }
+
+    async function handleLogin() {
+      const username = document.getElementById("loginUsername").value.trim();
+      const password = document.getElementById("loginPassword").value;
+      const errBox = document.getElementById("loginError");
+      errBox.style.display = "none";
+      try {
+        const res = await api("/api/auth/login", { method: "POST", body: { username, password } });
+        token = res.token;
+        sessionStorage.setItem("streamlab_admin_token", token);
+        currentUser = res.user;
+        document.getElementById("authModal").style.display = "none";
+        if (currentUser.mustChange) {
+          document.getElementById("changePassModal").style.display = "flex";
+        } else {
+          initDashboard();
+        }
+      } catch (e) {
+        errBox.textContent = e.message;
+        errBox.style.display = "block";
+      }
+    }
+
+    async function handleChangePassword() {
+      const oldPassword = document.getElementById("curPassword").value;
+      const newPassword = document.getElementById("newPassword").value;
+      const errBox = document.getElementById("changePassError");
+      errBox.style.display = "none";
+      try {
+        await api("/api/auth/change-password", { method: "POST", body: { oldPassword, newPassword } });
+        document.getElementById("changePassModal").style.display = "none";
+        showToast("Password updated. Welcome!");
+        initDashboard();
+      } catch (e) {
+        errBox.textContent = e.message;
+        errBox.style.display = "block";
+      }
+    }
+
+    function logout() {
+      sessionStorage.removeItem("streamlab_admin_token");
+      token = "";
+      currentUser = null;
+      document.getElementById("authModal").style.display = "flex";
+    }
+
+    function switchTab(tabId) {
+      document.querySelectorAll(".nav-tab").forEach(t => t.classList.remove("active"));
+      document.querySelectorAll(".tab-content").forEach(c => c.classList.remove("active"));
+      event.target.classList.add("active");
+      document.getElementById(tabId).classList.add("active");
+      if (tabId === "tabStats") loadStats();
+      if (tabId === "tabConfig") loadConfig();
+      if (tabId === "tabUsers") loadUsers();
+      if (tabId === "tabFeatured") loadFeatured();
+      if (tabId === "tabAudit") loadAudit();
+    }
+
+    async function initDashboard() {
+      document.getElementById("adminUserTag").textContent = `Admin: ${currentUser.username}`;
+      loadStats();
+    }
+
+    async function loadStats() {
+      try {
+        const stats = await api("/api/admin/stats");
+        document.getElementById("statUsers").textContent = stats.users;
+        document.getElementById("statActive").textContent = stats.activeDay;
+        document.getElementById("statSignups").textContent = stats.signupsWeek;
+        document.getElementById("statAdmins").textContent = stats.admins;
+        document.getElementById("statFeatured").textContent = stats.featured;
+      } catch (e) { showToast(e.message, true); }
+    }
+
+    async function loadConfig() {
+      try {
+        const data = await api("/api/admin/config");
+        configSchema = data.schema;
+        currentConfig = data.values;
+        renderConfig();
+      } catch (e) { showToast(e.message, true); }
+    }
+
+    function renderConfig() {
+      const container = document.getElementById("configFormContainer");
+      container.innerHTML = "";
+      const groups = {};
+      configSchema.forEach(item => {
+        groups[item.group] = groups[item.group] || [];
+        groups[item.group].push(item);
+      });
+
+      for (const [groupName, items] of Object.entries(groups)) {
+        const fieldset = document.createElement("div");
+        fieldset.style.marginBottom = "1.5rem";
+        fieldset.innerHTML = `<h4 style="color:var(--primary); margin-bottom:0.75rem; border-bottom:1px solid var(--border); padding-bottom:0.3rem;">${groupName}</h4>`;
+        
+        items.forEach(f => {
+          const val = currentConfig[f.key] !== undefined ? currentConfig[f.key] : f.default;
+          const wrap = document.createElement("div");
+          wrap.className = "form-group";
+          
+          if (f.type === "bool") {
+            wrap.innerHTML = `
+              <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">
+                <input type="checkbox" id="cfg_${f.key}" ${val ? "checked" : ""}> ${f.label}
+              </label>
+              ${f.help ? `<div class="help-text">${f.help}</div>` : ""}
+            `;
+          } else if (f.type === "select") {
+            const opts = f.options.map(o => `<option value="${o}" ${o === val ? "selected" : ""}>${o}</option>`).join("");
+            wrap.innerHTML = `
+              <label>${f.label}</label>
+              <select id="cfg_${f.key}">${opts}</select>
+              ${f.help ? `<div class="help-text">${f.help}</div>` : ""}
+            `;
+          } else {
+            wrap.innerHTML = `
+              <label>${f.label}</label>
+              <input type="text" id="cfg_${f.key}" value="${val || ""}">
+              ${f.help ? `<div class="help-text">${f.help}</div>` : ""}
+            `;
+          }
+          fieldset.appendChild(wrap);
+        });
+        container.appendChild(fieldset);
+      }
+    }
+
+    async function saveConfig() {
+      const patch = {};
+      configSchema.forEach(f => {
+        const el = document.getElementById("cfg_" + f.key);
+        if (f.type === "bool") patch[f.key] = el.checked;
+        else if (f.type === "select") patch[f.key] = el.value;
+        else patch[f.key] = el.value;
+      });
+      try {
+        await api("/api/admin/config", { method: "PUT", body: patch });
+        showToast("Settings updated successfully");
+      } catch (e) { showToast(e.message, true); }
+    }
+
+    async function loadUsers() {
+      try {
+        const users = await api("/api/admin/users");
+        const tbody = document.getElementById("userTableBody");
+        tbody.innerHTML = users.map(u => `
+          <tr>
+            <td>${u.id}</td>
+            <td><strong>${u.username}</strong></td>
+            <td><span class="badge ${u.role === 'admin' ? 'badge-admin' : 'badge-user'}">${u.role}</span></td>
+            <td><span class="badge ${u.disabled ? 'badge-disabled' : 'badge-active'}">${u.disabled ? 'Disabled' : 'Active'}</span></td>
+            <td>${u.created_at || '-'}</td>
+            <td>${u.last_login || 'Never'}</td>
+            <td>
+              <button class="btn btn-sm" onclick="toggleUser(${u.id}, ${u.disabled ? 0 : 1})">${u.disabled ? 'Enable' : 'Disable'}</button>
+              <button class="btn btn-sm" onclick="resetUserPass(${u.id}, '${u.username}')">Reset Pass</button>
+            </td>
+          </tr>
+        `).join("");
+      } catch (e) { showToast(e.message, true); }
+    }
+
+    async function toggleUser(id, disabled) {
+      try {
+        await api(`/api/admin/users/${id}`, { method: "PATCH", body: { disabled } });
+        showToast("User status updated");
+        loadUsers();
+      } catch (e) { showToast(e.message, true); }
+    }
+
+    async function resetUserPass(id, username) {
+      const p = prompt(`Enter new temporary password for ${username}:`);
+      if (!p) return;
+      try {
+        await api(`/api/admin/users/${id}/reset-password`, { method: "POST", body: { newPassword: p } });
+        showToast(`Password updated for ${username}`);
+      } catch (e) { showToast(e.message, true); }
+    }
+
+    async function loadFeatured() {
+      try {
+        const list = await api("/api/admin/featured");
+        const tbody = document.getElementById("featuredTableBody");
+        tbody.innerHTML = list.length === 0
+          ? `<tr><td colspan="6" style="text-align:center; color:var(--muted);">No featured titles published yet.</td></tr>`
+          : list.map(f => `
+            <tr>
+              <td>${f.sort}</td>
+              <td><strong>${f.title}</strong></td>
+              <td>${f.language || 'All'}</td>
+              <td style="max-width:250px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${f.stream_url}</td>
+              <td><span class="badge ${f.enabled ? 'badge-active' : 'badge-disabled'}">${f.enabled ? 'Live' : 'Hidden'}</span></td>
+              <td>
+                <button class="btn btn-sm btn-danger" onclick="deleteFeatured(${f.id})">Delete</button>
+              </td>
+            </tr>
+          `).join("");
+      } catch (e) { showToast(e.message, true); }
+    }
+
+    async function addFeatured() {
+      const title = document.getElementById("featTitle").value.trim();
+      const stream_url = document.getElementById("featStream").value.trim();
+      const poster_url = document.getElementById("featPoster").value.trim();
+      const language = document.getElementById("featLang").value.trim();
+      const overview = document.getElementById("featOverview").value.trim();
+      if (!title || !stream_url) {
+        showToast("Title and stream URL are required", true);
+        return;
+      }
+      try {
+        await api("/api/admin/featured", { method: "POST", body: { title, stream_url, poster_url, language, overview } });
+        showToast("Featured title added");
+        document.getElementById("featTitle").value = "";
+        document.getElementById("featStream").value = "";
+        document.getElementById("featPoster").value = "";
+        document.getElementById("featLang").value = "";
+        document.getElementById("featOverview").value = "";
+        loadFeatured();
+      } catch (e) { showToast(e.message, true); }
+    }
+
+    async function deleteFeatured(id) {
+      if (!confirm("Are you sure you want to remove this featured title?")) return;
+      try {
+        await api(`/api/admin/featured/${id}`, { method: "DELETE" });
+        showToast("Featured title removed");
+        loadFeatured();
+      } catch (e) { showToast(e.message, true); }
+    }
+
+    async function loadAudit() {
+      try {
+        const logs = await api("/api/admin/audit");
+        const tbody = document.getElementById("auditTableBody");
+        tbody.innerHTML = logs.map(l => `
+          <tr>
+            <td style="white-space:nowrap;">${l.ts}</td>
+            <td><strong>${l.actor}</strong></td>
+            <td><span class="badge badge-admin">${l.action}</span></td>
+            <td>${l.detail || '-'}</td>
+          </tr>
+        `).join("");
+      } catch (e) { showToast(e.message, true); }
+    }
+
+    // Auto check existing session on load
+    if (token) {
+      api("/api/me")
+        .then(res => {
+          currentUser = res.user;
+          document.getElementById("authModal").style.display = "none";
+          if (currentUser.mustChange) {
+            document.getElementById("changePassModal").style.display = "flex";
+          } else {
+            initDashboard();
+          }
+        })
+        .catch(() => { logout(); });
+    }
+  </script>
+</body>
+</html>
