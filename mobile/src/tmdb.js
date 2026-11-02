@@ -1,9 +1,22 @@
 import { getSettings } from "./settings.js";
-import { langByCode } from "./languages.js";
+import { langByCode, contentLangByCode } from "./languages.js";
 
 const BASE = "https://api.themoviedb.org/3";
 const cache = new Map();
 const CACHE_TTL_MS = 15 * 60 * 1000;
+
+export const ALL_INDIAN_LANG_QUERY = "hi|ta|te|ml|kn|bn|mr|pa|gu|as|or";
+
+export const ATTRIBUTION = {
+  tmdb: {
+    notice: "This product uses the TMDB API but is not endorsed or certified by TMDB.",
+    url: "https://www.themoviedb.org"
+  },
+  justWatch: {
+    notice: "Streaming availability data powered by JustWatch.",
+    url: "https://www.justwatch.com"
+  }
+};
 
 export const img = (p, size = "w342") =>
   p ? (p.startsWith("http") ? p : `https://image.tmdb.org/t/p/${size}${p}`) : null;
@@ -112,6 +125,19 @@ async function get(path) {
 
 const tv = (items) => (items || []).map((t) => ({ ...t, title: t.title || t.name, media: "tv" }));
 
+export function deduplicateTitles(items) {
+  if (!Array.isArray(items)) return [];
+  const seen = new Set();
+  return items.filter((item) => {
+    if (!item || !item.id) return false;
+    const media = item.media || (item.name ? "tv" : "movie");
+    const key = `${media}:${item.id}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 export const GENRES = [
   { id: "all", name: "All Genres" },
   { id: 28, name: "Action" },
@@ -122,9 +148,128 @@ export const GENRES = [
   { id: 10751, name: "Family" },
 ];
 
-// Rows for one content language.
-export async function loadRows(code = "hi") {
-  const L = langByCode(code);
+// Phase 22 India-First Shelves Engine
+export async function loadIndiaFirstShelves() {
+  const allLang = encodeURIComponent(ALL_INDIAN_LANG_QUERY);
+
+  const jobs = [
+    // Section 1 — Trending in India
+    [
+      "Trending Movies in India",
+      get(`/discover/movie?with_original_language=${allLang}&region=IN&sort_by=popularity.desc`)
+    ],
+    [
+      "Trending Indian Series",
+      get(`/discover/tv?with_original_language=${allLang}&sort_by=popularity.desc`).then(tv)
+    ],
+
+    // Section 2 — Hindi Entertainment
+    [
+      "Hindi Blockbusters",
+      get(`/discover/movie?with_original_language=hi&region=IN&sort_by=popularity.desc`)
+    ],
+    [
+      "Hindi Web Series & Originals",
+      get(`/discover/tv?with_original_language=hi&sort_by=popularity.desc`).then(tv)
+    ],
+
+    // Section 3 — South Indian Cinema
+    [
+      "Tamil Cinema Highlights",
+      get(`/discover/movie?with_original_language=ta&region=IN&sort_by=popularity.desc`)
+    ],
+    [
+      "Telugu Cinema Highlights",
+      get(`/discover/movie?with_original_language=te&region=IN&sort_by=popularity.desc`)
+    ],
+    [
+      "Malayalam Cinema Hits",
+      get(`/discover/movie?with_original_language=ml&region=IN&sort_by=popularity.desc`)
+    ],
+    [
+      "Kannada Cinema Favorites",
+      get(`/discover/movie?with_original_language=kn&region=IN&sort_by=popularity.desc`)
+    ],
+
+    // Section 4 — Regional India
+    [
+      "Bengali Cinema",
+      get(`/discover/movie?with_original_language=bn&region=IN&sort_by=popularity.desc`)
+    ],
+    [
+      "Marathi Cinema",
+      get(`/discover/movie?with_original_language=mr&region=IN&sort_by=popularity.desc`)
+    ],
+    [
+      "Punjabi Cinema & Hits",
+      get(`/discover/movie?with_original_language=pa&region=IN&sort_by=popularity.desc`)
+    ],
+    [
+      "Gujarati Cinema",
+      get(`/discover/movie?with_original_language=gu&region=IN&sort_by=popularity.desc`)
+    ],
+    [
+      "Assamese & Northeast Stories",
+      get(`/discover/movie?with_original_language=as&region=IN&sort_by=popularity.desc`)
+    ],
+    [
+      "Odia Cinema",
+      get(`/discover/movie?with_original_language=or&region=IN&sort_by=popularity.desc`)
+    ],
+
+    // Section 5 — Available Across OTT Platforms (Major Providers)
+    [
+      "Popular on JioHotstar",
+      get(`/discover/movie?with_original_language=${allLang}&watch_region=IN&with_watch_providers=122&sort_by=popularity.desc`)
+    ],
+    [
+      "Popular on Prime Video India",
+      get(`/discover/movie?with_original_language=${allLang}&watch_region=IN&with_watch_providers=119&sort_by=popularity.desc`)
+    ],
+    [
+      "Available on SonyLIV & ZEE5",
+      get(`/discover/movie?with_original_language=${allLang}&watch_region=IN&with_watch_providers=237%7C232&sort_by=popularity.desc`)
+    ],
+
+    // Section 6 — Free Indian Entertainment (Verified Legal Free / Ad-Supported)
+    [
+      "Free Legal Indian Entertainment",
+      get(`/discover/movie?with_original_language=${allLang}&watch_region=IN&with_watch_monetization_types=free%7Cads&sort_by=popularity.desc`)
+    ],
+
+    // Section 7 — Indian Family and Kids
+    [
+      "Indian Family & Kids",
+      get(`/discover/movie?with_original_language=${allLang}&region=IN&with_genres=10751,16&sort_by=popularity.desc`)
+    ],
+
+    // Section 8 — Indian Classics & Documentaries
+    [
+      "Indian Documentaries & Culture",
+      get(`/discover/movie?with_original_language=${allLang}&with_genres=99&sort_by=popularity.desc`)
+    ],
+  ];
+
+  const done = await Promise.allSettled(jobs.map((j) => j[1]));
+  return jobs
+    .map(([title], i) => {
+      const raw = done[i].status === "fulfilled" && Array.isArray(done[i].value) ? done[i].value : [];
+      return {
+        title,
+        items: deduplicateTitles(raw),
+      };
+    })
+    .filter((r) => r.items.length > 0);
+}
+
+// Rows for a selected content language.
+export async function loadRows(code = "all") {
+  if (code === "all") {
+    const allShelves = await loadIndiaFirstShelves();
+    if (allShelves.length > 0) return allShelves;
+  }
+
+  const L = contentLangByCode(code);
   const lang = encodeURIComponent(L.tmdb);
   const movies = (extra) => get(`/discover/movie?with_original_language=${lang}&region=IN${extra}`);
 
@@ -145,20 +290,51 @@ export async function loadRows(code = "hi") {
   const done = await Promise.allSettled(jobs.map((j) => j[1]));
   return jobs
     .map(([title], i) => {
-      const items = (done[i].status === "fulfilled" && Array.isArray(done[i].value)) ? done[i].value : [];
+      const raw = done[i].status === "fulfilled" && Array.isArray(done[i].value) ? done[i].value : [];
       return {
         title: title.startsWith("South") ? title : `${L.label}: ${title}`,
-        items,
+        items: deduplicateTitles(raw),
       };
     })
     .filter((r) => r.items.length > 0);
 }
 
-export async function searchMovies(query) {
-  const q = query.trim();
+// Filter titles by OTT streaming provider and monetization type
+export async function loadByProvider(providerTmdbId, monetization = "all", langCode = "all") {
+  const lang = langCode === "all" ? ALL_INDIAN_LANG_QUERY : (contentLangByCode(langCode).tmdb || "hi");
+  let query = `/discover/movie?with_original_language=${encodeURIComponent(lang)}&watch_region=IN&sort_by=popularity.desc`;
+  if (providerTmdbId) {
+    query += `&with_watch_providers=${providerTmdbId}`;
+  }
+  if (monetization && monetization !== "all") {
+    const monoMap = {
+      subscription: "flatrate",
+      free: "free",
+      ads: "ads",
+      rent: "rent",
+    };
+    query += `&with_watch_monetization_types=${monoMap[monetization] || monetization}`;
+  }
+  const results = await get(query);
+  return deduplicateTitles(Array.isArray(results) ? results : []);
+}
+
+// Multi-type Search across movies and TV series
+export async function searchMovies(query, type = "movie") {
+  const q = String(query || "").trim();
   if (!q) return [];
-  const results = await get(`/search/movie?query=${encodeURIComponent(q)}&region=IN`);
-  return Array.isArray(results) ? results : [];
+  const safeType = ["movie", "tv", "multi"].includes(type) ? type : "movie";
+  const results = await get(`/search/${safeType}?query=${encodeURIComponent(q)}&region=IN`);
+  if (!Array.isArray(results)) return [];
+  return deduplicateTitles(
+    results
+      .filter((item) => item.media_type !== "person")
+      .map((item) => ({
+        ...item,
+        title: item.title || item.name,
+        media: item.media || item.media_type || (safeType === "tv" ? "tv" : "movie"),
+      }))
+  );
 }
 
 // Fetch rich details: backdrop, runtime, genres, rating, credits
@@ -180,11 +356,13 @@ export async function getSimilarMovies(item) {
   try {
     const data = await get(`/${kind}/${item.id}/similar`);
     const results = Array.isArray(data) ? data : data?.results || [];
-    return results.slice(0, 10).map((m) => ({
-      ...m,
-      title: m.title || m.name,
-      media: kind,
-    }));
+    return deduplicateTitles(
+      results.slice(0, 10).map((m) => ({
+        ...m,
+        title: m.title || m.name,
+        media: kind,
+      }))
+    );
   } catch {
     return [];
   }

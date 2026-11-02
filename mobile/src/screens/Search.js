@@ -88,7 +88,7 @@ export default function Search({ onSelect }) {
     }
     setBusy(true);
     const timer = setTimeout(() => {
-      searchMovies(text)
+      searchMovies(text, "multi")
         .then((res) => {
           setResults(res);
           saveQuery(text);
@@ -260,3 +260,4 @@ const styles = StyleSheet.create({
   meta: { color: "#8fa8b6", marginTop: 4, fontSize: 14, lineHeight: 18 },
   centerNotice: { padding: 32, alignItems: "center" },
 });
+
